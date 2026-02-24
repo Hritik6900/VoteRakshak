@@ -64,6 +64,8 @@ class Voter(Base):
     enrollment = Column(String(50), unique=True, nullable=False)
     name = Column(String(100), nullable=False)
     face_encoding = Column(LONGBLOB, nullable=False)
+    email = Column(String(150), nullable=True)
+    phone = Column(String(20), nullable=True)
 
 
 class Election(Base):

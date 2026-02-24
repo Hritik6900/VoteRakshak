@@ -26,8 +26,16 @@ from config.secret import (
     CONTRACT_ADDRESS,
     ABI_PATH,
     RPC_URL,
-    GEMINI_API_KEY
+    GEMINI_API_KEY,
+    SMTP_EMAIL,
+    SMTP_PASSWORD,
+    TWILIO_ACCOUNT_SID,
+    TWILIO_AUTH_TOKEN,
+    TWILIO_WHATSAPP_NUMBER
 )
+import yagmail
+import threading
+from twilio.rest import Client
 
 import google.generativeai as genai
 if GEMINI_API_KEY:
@@ -132,13 +140,84 @@ def send_contract_tx(fn, *args, gas=500000):
 
 
 def generate_enrollment_hash(enrollment, election_id):
-    """Generate hash for enrollment + election ID combination"""
-    combined = f"{enrollment}:{election_id}"
-    return "0x" + hashlib.sha256(combined.encode()).hexdigest()
-
+    """Generate hash for enrollment    Returns (enrollment_hash_str)
+    """
+    data = f"{enrollment}:{election_id}"
+    return hashlib.sha256(data.encode('utf-8')).hexdigest()
 
 # ============================================================
-#                    AUTH DECORATOR
+#                    EMAIL UTILITY (BACKGROUND)
+# ============================================================
+
+def send_vote_receipt_email(to_email, enrollment, receipt_id, tx_hash, block_number):
+    if not SMTP_EMAIL or not SMTP_PASSWORD or not to_email:
+        return
+        
+    try:
+        yag = yagmail.SMTP(SMTP_EMAIL, SMTP_PASSWORD)
+        
+        subject = "Your Official Vote Verification Receipt - Vote Rakshak"
+        
+        content = f"""
+        <h2>✅ Vote Successfully Cast</h2>
+        <p>Dear Voter (Enrollment: {enrollment}),</p>
+        <p>Your vote has been securely and immutably recorded on the Ethereum blockchain via Vote Rakshak.</p>
+        <hr>
+        <h3>Your Cryptographic Proof:</h3>
+        <ul>
+            <li><strong>Receipt ID:</strong> {receipt_id}</li>
+            <li><strong>Transaction Hash:</strong> {tx_hash}</li>
+            <li><strong>Block Number:</strong> {block_number}</li>
+        </ul>
+        <hr>
+        <p><i>You can verify this cryptographic proof at any time on the Verification Portal.</i></p>
+        <p>Jai Hind! 🇮🇳</p>
+        """
+        
+        yag.send(to=to_email, subject=subject, contents=content)
+        print(f"[Email Sent] Receipt {receipt_id} to {to_email}")
+    except Exception as e:
+        print(f"[Email Error] Failed to send receipt to {to_email}: {e}")
+
+def send_vote_receipt_whatsapp(to_phone, enrollment, receipt_id, tx_hash, block_number):
+    if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN or not to_phone:
+        return
+
+    try:
+        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        
+        # Ensure number has whatsapp scheme
+        if not to_phone.startswith("whatsapp:"):
+            # assuming indian number test fallback if no + code
+            to_phone = f"+91{to_phone}" if len(to_phone) == 10 else to_phone
+            if not to_phone.startswith("+"):
+                to_phone = f"+{to_phone}"
+            to_phone_formatted = f"whatsapp:{to_phone}"
+        else:
+            to_phone_formatted = to_phone
+
+        body_text = (
+            f"✅ *Vote Successfully Cast*\n\n"
+            f"Dear Voter ({enrollment}),\n"
+            f"Your vote has been immutably recorded on the Ethereum blockchain via Vote Rakshak.\n\n"
+            f"*Cryptographic Proof:*\n"
+            f"🔹 *Receipt ID:* {receipt_id}\n"
+            f"🔹 *TX Hash:* {tx_hash}\n"
+            f"🔹 *Block:* {block_number}\n\n"
+            f"Thank you for voting securely! 🇮🇳"
+        )
+        
+        message = client.messages.create(
+            from_=TWILIO_WHATSAPP_NUMBER,
+            body=body_text,
+            to=to_phone_formatted
+        )
+        print(f"[WhatsApp Sent] Message ID {message.sid} to {to_phone_formatted}")
+    except Exception as e:
+        print(f"[WhatsApp Error] Failed to send receipt to {to_phone}: {e}")
+
+# ============================================================
+#                    AUTH & MIDDLEWARE 
 # ============================================================
 def admin_required(f):
     @wraps(f)
@@ -782,6 +861,8 @@ def register_voter_camera():
                 enrollment=enrollment,
                 name=name,
                 face_encoding=new_enc.tobytes(),
+                email=request.form.get("email", None),
+                phone=request.form.get("phone", None)
             )
             db.add(voter)
             db.commit()
@@ -885,6 +966,26 @@ def vote_v2(election_id):
             )
             db.add(vote_receipt)
             db.commit()
+
+            # Fire Background Email
+            if voter.email:
+                threading.Thread(target=send_vote_receipt_email, args=(
+                    voter.email, 
+                    enrollment, 
+                    receipt_id, 
+                    tx_hash, 
+                    receipt['blockNumber']
+                )).start()
+                
+            # Fire Background WhatsApp SMS
+            if voter.phone:
+                threading.Thread(target=send_vote_receipt_whatsapp, args=(
+                    voter.phone, 
+                    enrollment, 
+                    receipt_id, 
+                    tx_hash, 
+                    receipt['blockNumber']
+                )).start()
 
             return jsonify({
                 "ok": True,

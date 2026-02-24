@@ -29,6 +29,14 @@ ADMIN_PRIVATE_KEY = os.getenv("ADMIN_PRIVATE_KEY", "")
 # ABI Path
 ABI_PATH = os.getenv("ABI_PATH", "")
 
+# Automated Notifications
+SMTP_EMAIL = os.getenv("SMTP_EMAIL", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
+TWILIO_WHATSAPP_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER", "")
+
 # MySQL Configuration (also in models.py)
 MYSQL_CONFIG = {
     "user": os.getenv("MYSQL_USER", "root"),
